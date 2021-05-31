@@ -1,3 +1,4 @@
+cd ..
 git clone https://gitlab.dune-project.org/core/dune-common.git
 git clone https://gitlab.dune-project.org/core/dune-geometry.git
 git clone https://gitlab.dune-project.org/core/dune-grid.git
