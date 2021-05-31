@@ -1,9 +1,13 @@
-# configure project
-./dune-common/bin/duneproject
-Try done
-dumux done
-0.1 done
-dejian.zhou@geo.uni-goettingen.de done
-y done
+git clone https://gitlab.dune-project.org/core/dune-common.git
+git clone https://gitlab.dune-project.org/core/dune-geometry.git
+git clone https://gitlab.dune-project.org/core/dune-grid.git
+git clone https://gitlab.dune-project.org/core/dune-localfunctions.git
+git clone https://gitlab.dune-project.org/core/dune-istl.git
+git clone https://gitlab.dune-project.org/extensions/dune-foamgrid.git
+git clone https://gitlab.dune-project.org/extensions/dune-alugrid.git
+git clone https://git.iws.uni-stuttgart.de/dumux-repositories/dumux.git
+git clone https://git.iws.uni-stuttgart.de/dumux-pub/glaeser2020a
+./dune-common/bin/dunecontrol --opts=dumux/cmake.opts all
+
 
 
