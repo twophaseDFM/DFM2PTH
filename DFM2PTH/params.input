@@ -7,12 +7,8 @@ MaxTimeStepSize = 1e6 # [s]
 EnableGravity = 1
 
 [Grid]
-#File = ./grids/complex.msh
-#File = ./grids/DFM2.msh
-#File = ./grids/DFM2_fine.msh
-#File = ./grids/DFM2_horizontal.msh
-#File = ./grids/DFM2_horizontal_long.msh
-File = ./grids/DFM3.msh
+#File = ./grids/DFM3.msh     # constant aperture
+File = ./grids/DFM4_aperture_dist.msh  # randomly distributed aperture
 DomainMarkers = true # enable domain markers
 
 [Matrix]
