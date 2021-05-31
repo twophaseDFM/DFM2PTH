@@ -14,7 +14,7 @@ DomainMarkers = true # enable domain markers
 [Matrix]
 
 Problem.IsInjectCO2 = 1
-Problem.IsPureCO2 = 1
+Problem.IsPureCO2 = 0
 
 Problem.Name = matrix
 
@@ -33,7 +33,7 @@ Problem.BoundarySaturation = 0.5
 SpatialParams.PermeabilityWell = 1e-10
 
 [Fracture]
-Problem.IsPureCO2 = 1
+Problem.IsPureCO2 = 0
 
 Problem.Name = fractures
 
