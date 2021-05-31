@@ -6,7 +6,7 @@ git clone https://gitlab.dune-project.org/core/dune-istl.git
 git clone https://gitlab.dune-project.org/extensions/dune-foamgrid.git
 git clone https://gitlab.dune-project.org/extensions/dune-alugrid.git
 git clone https://git.iws.uni-stuttgart.de/dumux-repositories/dumux.git
-git clone https://git.iws.uni-stuttgart.de/dumux-pub/glaeser2020a
+git clone https://github.com/twophaseDFM/dumux.git
 ./dune-common/bin/dunecontrol --opts=dumux/cmake.opts all
 
 
