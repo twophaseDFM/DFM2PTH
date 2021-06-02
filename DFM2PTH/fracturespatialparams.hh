@@ -73,29 +73,47 @@ public:
     , barrierPcKrSwCurve_("Fracture.SpatialParams.Barrier")
     {
         porosity_ = getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Porosity");
-        permeability1_ = getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Permeability1");
-        permeability2_ = getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Permeability2");
-        permeability3_ = getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Permeability3");
-        permeability4_ = getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Permeability4");
-        permeability5_ = getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Permeability5");
+        aperture1_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture1"));
+        aperture2_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture2"));
+        aperture3_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture3"));
+        aperture4_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture4"));
+        aperture5_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture5"));
+        kn_ = (getParamFromGroup<Scalar>(paramGroup, "Problem.Stiffness"));
+        alphaT_ = (getParamFromGroup<Scalar>(paramGroup, "Problem.ThermalExpansionCoefficient"));
     }
 
     //! Function for defining the (intrinsic) permeability \f$[m^2]\f$.
-    template< class ElementSolution >
+    template< class ElementSolution, class FluidState >
     PermeabilityType permeability(const Element& element,
                                   const SubControlVolume& scv,
-                                  const ElementSolution& elemSol) const
+                                  const ElementSolution& elemSol,
+								  const FluidState& fs) const
     {
+    	int nPhaseIdx = 1;
+    	int wPhaseIdx = 0;
+		const auto peff_ = fs.saturation(nPhaseIdx) * fs.pressure(nPhaseIdx) + fs.saturation(wPhaseIdx)* fs.pressure(wPhaseIdx);
+
+		const GlobalPosition& globalPos = scv.center();
+		const auto domainHeight = 100.0;
+		const auto initialTemperature = 283.0 + (domainHeight - globalPos[dimWorld-1])*0.03;
+        const auto deltaT_ = temperature_ - initialTemperature;
+
+        Scalar a1 = aperture1_ + peff_/kn_ + deltaT_ * alphaT_;
+        Scalar a2 = aperture2_ + peff_/kn_ + deltaT_ * alphaT_;
+        Scalar a3 = aperture3_ + peff_/kn_ + deltaT_ * alphaT_;
+        Scalar a4 = aperture4_ + peff_/kn_ + deltaT_ * alphaT_;
+        Scalar a5 = aperture5_ + peff_/kn_ + deltaT_ * alphaT_;
+
         if (getElementDomainMarker(element) == 1)
-        	return permeability1_;
+        	return a1*a1/12;
         else if(getElementDomainMarker(element) == 2)
-        	return permeability2_;
+        	return a2*a2/12;
         else if(getElementDomainMarker(element) == 3)
-        	return permeability3_;
+        	return a3*a3/12;
         else if(getElementDomainMarker(element) == 4)
-        	return permeability4_;
+        	return a4*a4/12;
         else
-        	return permeability5_;
+        	return a5*a5/12;
     }
 
     //! Return the porosity
