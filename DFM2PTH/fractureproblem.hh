@@ -62,6 +62,9 @@ class FractureSubProblem : public PorousMediumFlowProblem<TypeTag>
     using Grid = typename GridView::Grid;
     using Element = typename GridView::template Codim<0>::Entity;
     using GlobalPosition = typename Element::Geometry::GlobalCoordinate;
+    using FluidSystem = GetPropType<TypeTag, Properties::FluidSystem>;
+
+    static constexpr int dimWorld = GridView::dimensionworld;
 
 
     // some indices for convenience
@@ -71,6 +74,9 @@ class FractureSubProblem : public PorousMediumFlowProblem<TypeTag>
         pressureIdx = Indices::pressureIdx,
         saturationIdx = Indices::saturationIdx,
         temperatureIdx = Indices::temperatureIdx,
+
+        wPhaseIdx = FluidSystem::BrineIdx,
+        nPhaseIdx = FluidSystem::CO2Idx,
     };
 
 public:
@@ -87,11 +93,15 @@ public:
     , aperture4_(getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture4"))
     , aperture5_(getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture5"))
     , IsPureCO2_(getParamFromGroup<Scalar>(paramGroup, "Problem.IsPureCO2"))
+    , kn_(getParamFromGroup<Scalar>(paramGroup, "Problem.Stiffness"))
+    , alphaT_(getParamFromGroup<Scalar>(paramGroup, "Problem.ThermalExpansionCoefficient"))
     {
         // initialize the fluid system, i.e. the tabulation
         // of water properties. Use the default p/T ranges.
         using FluidSystem = GetPropType<TypeTag, Properties::FluidSystem>;
         FluidSystem::init();
+
+        using PermeabilityType = Scalar;
     }
 
     //! Specifies the type of boundary condition at a given position
@@ -138,28 +148,29 @@ public:
 //    }
     template< class ElementSolution >
     Scalar extrusionFactor(const Element& element,
-                           const SubControlVolume& scvf,
+                           const SubControlVolume& scv,
                            const ElementSolution& elemSol) const
     {
-//        static constexpr auto fractureDomainId = Dune::index_constant<1>();
-//        const auto& fractureProblem = couplingManager().problem(fractureDomainId);
-//
-//        // use helper function in coupling manager to obtain the element this face couples to
-//        const auto fractureElement = couplingManager().getLowDimElement(element, scvf);
-//
-//        // obtain marker from the spatial params of the fracture problem
-//        const auto fractureElementMarker = fractureProblem.spatialParams().getElementDomainMarker(fractureElement);
-//
+	using FluidState = GetPropType<TypeTag, Properties::FluidState>;
+    	FluidState fs;
+        fs.setTemperature(wPhaseIdx, temperature_);
+        fs.setTemperature(nPhaseIdx, temperature_);
+	const auto peff_ = fs.saturation(nPhaseIdx) * fs.pressure(nPhaseIdx) + fs.saturation(wPhaseIdx)* fs.pressure(wPhaseIdx);
+
+	const GlobalPosition& globalPos = scv.center();
+        const auto initialValues = initialAtPos(globalPos);
+        const auto deltaT_ = temperature_ - initialValues[temperatureIdx];
+
 		if (getElementDomainMarker(element) == 1)
-			return aperture1_;
+			return aperture1_ + peff_/kn_ + deltaT_ * alphaT_;
 		else if (getElementDomainMarker(element) == 2)
-			return aperture2_;
+			return aperture2_ + peff_/kn_ + deltaT_ * alphaT_;
 		else if (getElementDomainMarker(element) == 3)
-			return aperture3_;
+			return aperture3_ + peff_/kn_ + deltaT_ * alphaT_;
 		else if (getElementDomainMarker(element) == 4)
-			return aperture4_;
+			return aperture4_ + peff_/kn_ + deltaT_ * alphaT_;
 		else
-        	return aperture5_;
+        	return aperture5_ + peff_/kn_ + deltaT_ * alphaT_;
     }
 
     //! evaluates the Dirichlet boundary condition for a given position
@@ -171,14 +182,13 @@ public:
     {
         // For the grid used here, the height of the domain is equal
         // to the maximum y-coordinate
-        const auto domainHeight = this->gridGeometry().bBoxMax()[1] + 6000;
-
+        const auto domainHeight = this->gridGeometry().bBoxMax()[dimWorld-1] + 6000;
         // we assume a constant water density of 1000 for initial conditions!
         const auto& g = this->spatialParams().gravity(globalPos);
         PrimaryVariables values;
         Scalar densityW = 1000.0;
-        values[pressureIdx] = 1e5 - (domainHeight - globalPos[1])*densityW*g[1];
-        values[temperatureIdx] = 283.0 + (domainHeight - globalPos[1])*0.03;
+        values[pressureIdx] = 1e5 - (domainHeight - globalPos[dimWorld-1])*densityW*g[dimWorld-1];
+        values[temperatureIdx] = 283.0 + (domainHeight - globalPos[dimWorld-1])*0.03;
         if (IsPureCO2_)
         	{values[saturationIdx] = 1.0 - eps_;}
         else
@@ -188,8 +198,11 @@ public:
     }
 
     //! returns the temperature in \f$\mathrm{[K]}\f$ in the domain
-//    Scalar temperature() const
-//    { return 383.15; /*10°*/ }
+    Scalar temperature() const
+    { return temperature_; /*10°*/ }
+
+//    Scalar pressure(int PhaseIdx) const
+//    {return pressure_ ;}
 
     //! sets the pointer to the coupling manager.
     void setCouplingManager(std::shared_ptr<CouplingManager> cm)
@@ -208,6 +221,8 @@ private:
     Scalar aperture1_,aperture2_,aperture3_,aperture4_,aperture5_;
     bool IsPureCO2_;
     static constexpr Scalar eps_ = 1e-7;
+    Scalar kn_, alphaT_;
+    Scalar temperature_;
 };
 
 } // end namespace Dumux
