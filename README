@@ -5,8 +5,27 @@ For building the code from source, create a new folder and download the installD
 chmod +x installDejian2021.sh
 ./installDejian2021.sh
 
-After successfully running the installation script, type
-cd DFM2PTH/build-cmake/DFM2PTH/
+To use the model, you also need to come to the file
+dumux/dumux/material/spatialparams/fv1p.hh
+
+come to line 182, replace 
+template <class ElementSolution> 
+by
+template <class ElementSolution, class FluidState> 
+
+and add 
+const FluidState& fs
+into the function permeability 
+
+then come to the file
+dumux/dumux/porosmediumflow/2p/volumevariable.hh
+
+come to line 113, replace 
+permeability_ = spatialParams.permeability(element, scv, elemSol)
+with 
+permeability_ = spatialParams.permeability(element, scv, elemSol, fluidState_)
+
+then come to the folder dumux/build-cmake/DFM2PTH, type
 make dfm2pth
 
 You can now execute the model by typing:
