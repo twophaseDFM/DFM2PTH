@@ -28,7 +28,6 @@
 
 // include the properties header
 #include "properties.hh"
-#include "computevelocities.hh"
 
 // Assuming the domain is saturated with CO2 before the injection!!!!
 //#include "properties_pureco2.hh"
