@@ -31,6 +31,8 @@
 
 #include <dumux/material/spatialparams/fv.hh>
 #include <dumux/material/fluidmatrixinteractions/2p/vangenuchten.hh>
+#include "fractureproblem.hh"
+#include <dumux/porousmediumflow/2p/model.hh>
 
 namespace Dumux {
 
@@ -41,10 +43,17 @@ namespace Dumux {
  * \brief The spatial params the two-phase facet coupling test
  */
 template< class FVGridGeometry, class Scalar >
+//template<class TypeTag>
 class FractureSpatialParams
 : public FVSpatialParams< FVGridGeometry, Scalar, FractureSpatialParams<FVGridGeometry, Scalar> >
+//: public FVSpatialParams <GetPropType<TypeTag, Properties::GridGeometry>,
+//  	  	  	  	  	  	  GetPropType<TypeTag, Properties::Scalar>,
+//						  FractureSpatialParams<TypeTag>>
 {
+//	using FVGridGeometry = GetPropType<TypeTag, Properties::GridGeometry>;
+//	using Scalar = GetPropType<TypeTag, Properties::Scalar>;
     using ThisType = FractureSpatialParams< FVGridGeometry, Scalar >;
+//	using ThisType = FractureSpatialParams<TypeTag>;
     using ParentType = FVSpatialParams< FVGridGeometry, Scalar, ThisType >;
 
     using SubControlVolume = typename FVGridGeometry::SubControlVolume;
@@ -55,9 +64,9 @@ class FractureSpatialParams
 
     using PcKrSwCurve = FluidMatrix::VanGenuchtenDefault<Scalar>;
 
-    // we identify those fractures as barriers, that have a domain marker
-    // of 2. This is what is set in the grid file (see grids/complex.geo)
-    static constexpr int barriersDomainMarker = 2;
+    static constexpr int dimWorld = GridView::dimensionworld;
+
+//    using CouplingManager = GetPropType<TypeTag, Properties::CouplingManager>;
 
 public:
     //! export the type used for permeabilities
@@ -73,36 +82,47 @@ public:
     , barrierPcKrSwCurve_("Fracture.SpatialParams.Barrier")
     {
         porosity_ = getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Porosity");
-        aperture1_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture1"));
-        aperture2_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture2"));
-        aperture3_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture3"));
-        aperture4_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture4"));
-        aperture5_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture5"));
+        a1_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture1"));
+        a2_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture2"));
+        a3_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture3"));
+        a4_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture4"));
+        a5_ = (getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture5"));
         kn_ = (getParamFromGroup<Scalar>(paramGroup, "Problem.Stiffness"));
-        alphaT_ = (getParamFromGroup<Scalar>(paramGroup, "Problem.ThermalExpansionCoefficient"));
+        wte_ = (getParamFromGroup<Scalar>(paramGroup, "Problem.WettingPhaseThermalExpansionCoefficient"));
+        nte_ = (getParamFromGroup<Scalar>(paramGroup, "Problem.NonWettingPhaseThermalExpansionCoefficient"));
+        a_ = (getParamFromGroup<Scalar>(paramGroup, "Problem.a"));
+        b_ = (getParamFromGroup<Scalar>(paramGroup, "Problem.b"));
     }
 
-    //! Function for defining the (intrinsic) permeability \f$[m^2]\f$.
-    template< class ElementSolution, class FluidState >
+//    //! Function for defining the (intrinsic) permeability \f$[m^2]\f$.
+//    template< class ElementSolution, class FluidState >
+    template< class ElementSolution>
     PermeabilityType permeability(const Element& element,
                                   const SubControlVolume& scv,
-                                  const ElementSolution& elemSol,
-								  const FluidState& fs) const
+                                  const ElementSolution& elemSol) const
     {
-    	int nPhaseIdx = 1;
-    	int wPhaseIdx = 0;
-		const auto peff_ = fs.saturation(nPhaseIdx) * fs.pressure(nPhaseIdx) + fs.saturation(wPhaseIdx)* fs.pressure(wPhaseIdx);
+    	int pressureIdx = 0;
+    	int saturationIdx = 1;
+    	int temperatureIdx = 2;
+        const auto& priVars = elemSol[scv.localDofIndex()];
+        const auto fmi = fluidMatrixInteraction(element, scv, elemSol);
+        const auto peff_ = priVars[saturationIdx] * (priVars[pressureIdx] + fmi.pc(1 - priVars[saturationIdx])) + (1 - priVars[saturationIdx]) * priVars[pressureIdx];
 
 		const GlobalPosition& globalPos = scv.center();
-		const auto domainHeight = 100.0;
+		const auto domainHeight = 100.0 + 6000;
+		Scalar densityW = 1000.0;
+		const auto g = -9.81;
 		const auto initialTemperature = 283.0 + (domainHeight - globalPos[dimWorld-1])*0.03;
-        const auto deltaT_ = temperature_ - initialTemperature;
+		const auto initialPressure = 1e5 - (domainHeight - globalPos[dimWorld-1])*densityW*g;
+		const auto ThermalExpan = (priVars[temperatureIdx] - initialTemperature) * (priVars[saturationIdx] * nte_ + (1 - priVars[saturationIdx]) * wte_);
+		const auto deltaP = peff_ - initialPressure;
+//        const auto deltaT_ = volVars.temperature() - initialTemperature;
 
-        Scalar a1 = aperture1_ + peff_/kn_ + deltaT_ * alphaT_;
-        Scalar a2 = aperture2_ + peff_/kn_ + deltaT_ * alphaT_;
-        Scalar a3 = aperture3_ + peff_/kn_ + deltaT_ * alphaT_;
-        Scalar a4 = aperture4_ + peff_/kn_ + deltaT_ * alphaT_;
-        Scalar a5 = aperture5_ + peff_/kn_ + deltaT_ * alphaT_;
+        Scalar a1 = a1_ + a_ * deltaP/kn_ + b_ * ThermalExpan * a1_;
+        Scalar a2 = a2_ + a_ * deltaP/kn_ + b_ * ThermalExpan * a2_;
+        Scalar a3 = a3_ + a_ * deltaP/kn_ + b_ * ThermalExpan * a3_;
+        Scalar a4 = a4_ + a_ * deltaP/kn_ + b_ * ThermalExpan * a4_;
+        Scalar a5 = a5_ + a_ * deltaP/kn_ + b_ * ThermalExpan * a5_;
 
         if (getElementDomainMarker(element) == 1)
         	return a1*a1/12;
@@ -114,7 +134,17 @@ public:
         	return a4*a4/12;
         else
         	return a5*a5/12;
+//    	return 1e-8;
     }
+
+//    PermeabilityType permeabilityAtPos(const GlobalPosition& globalPos) const
+//    {
+////    	if (globalPos[0] < 0 + eps_)
+////    		return permeabilityWell_ ;
+////    	else
+//		return 1e-10;
+//    }
+
 
     //! Return the porosity
     template< class ElementSolution >
@@ -149,20 +179,32 @@ public:
         return FluidSystem::phase0Idx;
     }
 
+    Scalar temperature() const
+    { return temperature_ ; }
+
     //! returns the domain marker for an element
     int getElementDomainMarker(const Element& element) const
     { return gridDataPtr_->getElementDomainMarker(element); }
 
+    Scalar pressure(int phaseIdx) const
+    {return pressure_ ;}
+
+//    const CouplingManager& couplingManager() const
+//    { return *couplingManagerPtr_; }
+
 private:
     //! pointer to the grid data (contains domain markers)
     std::shared_ptr<const Dumux::GridData<Grid>> gridDataPtr_;
+//    std::shared_ptr<CouplingManager> couplingManagerPtr_;
 
     Scalar porosity_;
-    Scalar porosityBarrier_;
-    PermeabilityType permeability1_,permeability2_,permeability3_,permeability4_,permeability5_ ;
-    PermeabilityType permeabilityBarrier_;
     const PcKrSwCurve pcKrSwCurve_;
     const PcKrSwCurve barrierPcKrSwCurve_;
+    Scalar pressure_;
+    Scalar temperature_;
+    Scalar a1_,a2_,a3_,a4_,a5_;
+    Scalar kn_, nte_, wte_;
+    Scalar a_, b_ ;
 };
 
 } // end namespace Dumux
