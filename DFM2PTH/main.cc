@@ -24,9 +24,11 @@
 #include <iostream>
 
 #include <dune/common/parallel/mpihelper.hh>
+#include <dune/grid/io/file/vtk/vtksequencewriter.hh>
 
 // include the properties header
 #include "properties.hh"
+#include "computevelocities.hh"
 
 // Assuming the domain is saturated with CO2 before the injection!!!!
 //#include "properties_pureco2.hh"
@@ -191,6 +193,11 @@ int main(int argc, char** argv)
     // Add model specific output fields
     using MatrixIOFields = GetPropType<MatrixTypeTag, Properties::IOFields>;
     using FractureIOFields = GetPropType<FractureTypeTag, Properties::IOFields>;
+//    VtkOutputModule<MatrixGridVariables, SolutionVector> matrixVtkWriter(*matrixGridVariables, x[matrixDomainId], matrixProblem->name());
+//    using VelocityOutput = GetPropType<MatrixTypeTag, Properties::VelocityOutput>;
+//    matrixVtkWriter.addVelocityOutput(std::make_shared<VelocityOutput>(*matrixGridVariables));
+//	using VelocityOutput = GetPropType<FractureTypeTag, Properties::VelocityOutput>;
+//	fractureVtkWriter.addVelocityOutput(std::make_shared<VelocityOutput>(*fractureGridVariables));
     MatrixIOFields::initOutputModule(matrixVtkWriter);
     FractureIOFields::initOutputModule(fractureVtkWriter);
 
@@ -206,8 +213,21 @@ int main(int argc, char** argv)
     fractureVtkWriter.addField(fractureDomainMarkers, "domainMarker");
 
     // write out initial solution
+    matrixProblem->updateVtkFields(x[matrixDomainId]);
+    matrixProblem->addVtkFields(matrixVtkWriter);
+    fractureProblem->updateVtkFields(x[fractureDomainId]);
+    fractureProblem->addVtkFields(fractureVtkWriter); //!< Add problem specific output fields
     matrixVtkWriter.write(0.0);
     fractureVtkWriter.write(0.0);
+
+//    using Velocity = Dune::FieldVector<double, 2>;
+//    using VelocityVector = std::vector<Velocity>;
+
+//	VelocityVector velocityMatrix(matrixFvGridGeometry->gridView().size(0));
+//	VelocityVector velocityFracture(fractureFvGridGeometry->gridView().size(0));
+
+//	matrixVtkWriter.addField(velocityMatrix, "velocity");
+//	fractureVtkWriter.addField(velocityFracture, "velocity");
 
     // get some time loop parameters
     const auto tEnd = getParam<double>("TimeLoop.TEnd");
@@ -250,6 +270,12 @@ int main(int argc, char** argv)
 
         // advance to the time loop to the next step
         timeLoop->advanceTimeStep();
+
+//        computeVelocities<MatrixTypeTag>(matrixDomainId, *assembler, *couplingManager, *matrixFvGridGeometry, *matrixGridVariables, x[matrixDomainId], velocityMatrix);
+//		computeVelocities<FractureTypeTag>(fractureDomainId, *assembler, *couplingManager, *fractureFvGridGeometry, *fractureGridVariables, x[fractureDomainId], velocityFracture);
+
+        matrixProblem->updateVtkFields(x[matrixDomainId]);
+        fractureProblem->updateVtkFields(x[fractureDomainId]);
 
         // write vtk output
         matrixVtkWriter.write(timeLoop->time());
