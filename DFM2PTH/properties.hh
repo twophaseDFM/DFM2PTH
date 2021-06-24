@@ -85,13 +85,17 @@ template<class TypeTag>
 struct SpatialParams<TypeTag, TTag::MatrixProblem>
 {
     using type = MatrixSpatialParams< GetPropType<TypeTag, Properties::GridGeometry>,
-                                      GetPropType<TypeTag, Properties::Scalar> >;
+                                      GetPropType<TypeTag, Properties::Scalar>>;
+//									  GetPropType<TypeTag, Properties::GridVariables>>;
+//	using type = MatrixSpatialParams< GetPropType<TypeTag>>;
 };
 template<class TypeTag>
 struct SpatialParams<TypeTag, TTag::FractureProblem>
 {
     using type = FractureSpatialParams< GetPropType<TypeTag, Properties::GridGeometry>,
-                                        GetPropType<TypeTag, Properties::Scalar> >;
+                                        GetPropType<TypeTag, Properties::Scalar>>;
+//										GetPropType<TypeTag, Properties::GridVariables>>;
+//	using type = FractureSpatialParams<TypeTag>;
 };
 
 // the fluid system for the matrix and fracture sub-domains
