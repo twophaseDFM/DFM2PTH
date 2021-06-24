@@ -63,8 +63,11 @@ class MatrixSubProblem : public PorousMediumFlowProblem<TypeTag>
     using GridView = typename FVGridGeometry::GridView;
     using Element = typename GridView::template Codim<0>::Entity;
     using GlobalPosition = typename Element::Geometry::GlobalCoordinate;
+    using SolutionVector = GetPropType<TypeTag, Properties::SolutionVector>;
 
     using FluidSystem = GetPropType<TypeTag, Properties::FluidSystem>;
+
+    static constexpr int dimWorld = GridView::dimensionworld;
 
     // some indices for convenience
     using Indices = typename GetPropType<TypeTag, Properties::ModelTraits>::Indices;
@@ -103,6 +106,42 @@ public:
         FluidSystem::init();
     }
 
+    template<class VTKWriter>
+    void addVtkFields(VTKWriter& vtk)
+    {
+        vtk.addField(deltaT_, "deltaT");
+        vtk.addField(overPressure_, "deltaP");
+
+    }
+
+    void updateVtkFields(const SolutionVector& curSol)
+    {
+    	int dofCodim = 0;
+    	const auto& gridView = this->gridGeometry().gridView();
+    	deltaT_.resize(gridView.size(dofCodim));
+    	overPressure_.resize(gridView.size(dofCodim));
+
+        for (const auto& element : elements(this->gridGeometry().gridView()))
+        {
+            auto elemSol = elementSolution(element, curSol, this->gridGeometry());
+//
+            auto fvGeometry = localView(this->gridGeometry());
+            fvGeometry.bindElement(element);
+//
+            for (auto&& scv : scvs(fvGeometry))
+            {
+                const auto dofIdxGlobal = scv.dofIndex();
+                const GlobalPosition& globalPos = scv.center();
+//                VolumeVariables volVars;
+                const auto& priVars = elemSol[scv.localDofIndex()];
+                const auto initialValues = initialAtPos(globalPos);
+//                volVars.update(elemSol, *this, element, scv);
+                deltaT_[dofIdxGlobal] = priVars[temperatureIdx] - initialValues[temperatureIdx];
+                overPressure_[dofIdxGlobal] = priVars[pressureIdx] - initialValues[pressureIdx];
+            }
+        }
+    }
+
     //! Specifies the type of boundary condition at a given position
     BoundaryTypes boundaryTypesAtPos(const GlobalPosition& globalPos) const
     {
@@ -124,23 +163,6 @@ public:
         BoundaryTypes values;
         values.setAllDirichlet();
 
-        // we need to obtain the domain marker of the fracture element that is coupled to this face
-        // therefore we first get the fracture problem from the coupling manager. For this test, we
-        // know that the fracture domain id is 1 (see main file)
-//        static constexpr auto fractureDomainId = Dune::index_constant<1>();
-//        const auto& fractureProblem = couplingManager().problem(fractureDomainId);
-//
-//        // use helper function in coupling manager to obtain the element this face couples to
-//        const auto fractureElement = couplingManager().getLowDimElement(element, scvf);
-//
-//        // obtain marker from the spatial params of the fracture problem
-//        const auto fractureElementMarker = fractureProblem.spatialParams().getElementDomainMarker(fractureElement);
-//
-//        // now define Neumann coupling on those elements that are defined as blocking
-//        // fractures, i.e. marker == 2, see .geo file in grids folder
-//        if (fractureElementMarker == 2)
-//            values.setAllNeumann();
-
         return values;
     }
 
@@ -150,14 +172,6 @@ public:
         // initialize values with the initial conditions
         auto values = initialAtPos(globalPos);
 
-        // nitrogen is in contact with the domain on the center half of the lower boundary
-//        if (globalPos[1] < eps_ && globalPos[0] > 25.0 && globalPos[0] < 75.0)
-//            {
-//        	values[saturationIdx] = boundarySaturation_;
-//        	values[pressureIdx] *= 2;
-//        	values[temperatureIdx] -= 100;
-//            }
-
         return values;
     }
 
@@ -166,14 +180,14 @@ public:
     {
         // For the grid used here, the height of the domain is equal
         // to the maximum y-coordinate
-        const auto domainHeight = this->gridGeometry().bBoxMax()[1] + 6000;
+        const auto domainHeight = this->gridGeometry().bBoxMax()[dimWorld-1] + 6000;
 
         // we assume a constant water density of 1000 for initial conditions!
         const auto& g = this->spatialParams().gravity(globalPos);
         PrimaryVariables values;
         Scalar densityW = 1000.0;
-        values[pressureIdx] = 1e5 - (domainHeight - globalPos[1])*densityW*g[1];
-        values[temperatureIdx] = 283.0 + (domainHeight - globalPos[1])*0.03;
+        values[pressureIdx] = 1e5 - (domainHeight - globalPos[dimWorld-1])*densityW*g[dimWorld-1];
+        values[temperatureIdx] = 283.0 + (domainHeight - globalPos[dimWorld-1])*0.03;
         if (IsPureCO2_)
         	{values[saturationIdx] = 1.0 - eps_;}
         else
@@ -186,7 +200,7 @@ public:
     {
         NumEqVector values(0.0);
 
-        if (globalPos[1] < 75 + eps_ && globalPos[1] > 25 - eps_ && globalPos[0] < this->gridGeometry().bBoxMin()[0] + eps_)
+        if (globalPos[dimWorld-1] < 75 + eps_ && globalPos[dimWorld-1] > 25 - eps_ && globalPos[0] < this->gridGeometry().bBoxMin()[0] + eps_)
         {
             // compute enthalpy flux associated with this injection [(J/(kg*s)]
             using FluidState = GetPropType<TypeTag, Properties::FluidState>;
@@ -202,49 +216,49 @@ public:
             if (IsInjectCO2_)
                 // inject air. negative values mean injection
 			{
-            	values[contiCO2EqIdx] = -InjectionRate_; // kg/(s*m^2)
+            	values[contiCO2EqIdx] = -InjectionRate_ * 700; // kg/(s*m^2) flow rate * density
             	values[energyEqIdx] = values[contiCO2EqIdx]*FluidSystem::enthalpy(fs, nPhaseIdx);
 			}
 			else
 			{
-                values[contiH2OEqIdx] = -InjectionRate_; // kg/(s*m^2)
+                values[contiH2OEqIdx] = -InjectionRate_ * 1000; // kg/(s*m^2) flow rate * density
             	values[energyEqIdx] = values[contiH2OEqIdx]*FluidSystem::enthalpy(fs, wPhaseIdx);
 			}
         }
 
-        if (globalPos[1] < 75 + eps_ && globalPos[1] > 25 - eps_ && globalPos[0] > this->gridGeometry().bBoxMax()[0] - eps_)
-        {
+//        if (globalPos[dimWorld-1] < 75 + eps_ && globalPos[dimWorld-1] > 25 - eps_ && globalPos[0] > this->gridGeometry().bBoxMax()[0] - eps_)
+//        {
             // compute enthalpy flux associatedvalues[energyEqIdx] = values[contiH2OEqIdx]*FluidSystem::enthalpy(fs, wPhaseIdx); with this injection [(J/(kg*s)]
-            using FluidState = GetPropType<TypeTag, Properties::FluidState>;
-            FluidState fs;
+//            using FluidState = GetPropType<TypeTag, Properties::FluidState>;
+//            FluidState fs;
 
-            const auto initialValues = initialAtPos(globalPos);
-            fs.setPressure(wPhaseIdx, initialValues[pressureIdx]);
-            fs.setPressure(nPhaseIdx, initialValues[pressureIdx]); // assume pressure equality here
-            fs.setTemperature(wPhaseIdx, temperature_);
-            fs.setTemperature(nPhaseIdx, temperature_);
+//            const auto initialValues = initialAtPos(globalPos);
+//            fs.setPressure(wPhaseIdx, initialValues[pressureIdx]);
+//            fs.setPressure(nPhaseIdx, initialValues[pressureIdx]); // assume pressure equality here
+//            fs.setTemperature(wPhaseIdx, temperature_);
+//            fs.setTemperature(nPhaseIdx, temperature_);
 
-            if (IsInjectCO2_)
+//            if (IsInjectCO2_)
                 // inject air. negative values mean injection
-			{
-            	if (IsPureCO2_)
-            	{
-            		values[contiCO2EqIdx] = InjectionRate_; // kg/(s*m^2)
-            		values[energyEqIdx] = values[contiCO2EqIdx]*FluidSystem::enthalpy(fs, nPhaseIdx);
-            	}
-            	else
-            	{
-            		values[contiCO2EqIdx] = InjectionRate_ * fs.saturation(nPhaseIdx); // kg/(s*m^2)
-            		values[contiH2OEqIdx] = InjectionRate_ * fs.saturation(wPhaseIdx);
-            		values[energyEqIdx] = values[contiCO2EqIdx]*FluidSystem::enthalpy(fs, nPhaseIdx) + values[contiH2OEqIdx]*FluidSystem::enthalpy(fs, wPhaseIdx);
-            	}
-			}
-			else
-			{
-                values[contiH2OEqIdx] = InjectionRate_; // kg/(s*m^2)
-            	values[energyEqIdx] = values[contiH2OEqIdx]*FluidSystem::enthalpy(fs, wPhaseIdx);
-			}
-        }
+//			{
+//            	if (IsPureCO2_)
+//            	{
+//            		values[contiCO2EqIdx] = InjectionRate_; // kg/(s*m^2)
+//           		values[energyEqIdx] = values[contiCO2EqIdx]*FluidSystem::enthalpy(fs, nPhaseIdx);
+//            	}
+//            	else
+//            	{
+//            		values[contiCO2EqIdx] = InjectionRate_ * fs.saturation(nPhaseIdx); // kg/(s*m^2)
+//            		values[contiH2OEqIdx] = InjectionRate_ * fs.saturation(wPhaseIdx);
+//            		values[energyEqIdx] = values[contiCO2EqIdx]*FluidSystem::enthalpy(fs, nPhaseIdx) + values[contiH2OEqIdx]*FluidSystem::enthalpy(fs, wPhaseIdx);
+//            	}
+//			}
+//			else
+//			{
+//                values[contiH2OEqIdx] = InjectionRate_; // kg/(s*m^2)
+//            	values[energyEqIdx] = values[contiH2OEqIdx]*FluidSystem::enthalpy(fs, wPhaseIdx);
+//			}
+//        }
 
         return values;
     }
@@ -273,6 +287,7 @@ private:
     Scalar temperature_;
     Scalar saturation_;
     static constexpr Scalar eps_ = 1e-7;
+    std::vector<Scalar> overPressure_, deltaT_;
 };
 
 } // end namespace Dumux
