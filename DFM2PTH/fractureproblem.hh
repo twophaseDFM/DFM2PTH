@@ -33,6 +33,10 @@
 #include <dumux/common/numeqvector.hh>
 #include <dumux/io/grid/griddata.hh>
 #include <dune/common/indices.hh>
+#include "fracturespatialparams.hh"
+#include <dumux/discretization/evalgradients.hh>
+#include <dumux/discretization/elementsolution.hh>
+#include <dumux/discretization/method.hh>
 
 namespace Dumux {
 
@@ -63,6 +67,9 @@ class FractureSubProblem : public PorousMediumFlowProblem<TypeTag>
     using Element = typename GridView::template Codim<0>::Entity;
     using GlobalPosition = typename Element::Geometry::GlobalCoordinate;
     using FluidSystem = GetPropType<TypeTag, Properties::FluidSystem>;
+    using SolutionVector = GetPropType<TypeTag, Properties::SolutionVector>;
+    using VolumeVariables = GetPropType<TypeTag, Properties::VolumeVariables>;
+    using FluidState = GetPropType<TypeTag, Properties::FluidState>;
 
     static constexpr int dimWorld = GridView::dimensionworld;
 
@@ -74,6 +81,11 @@ class FractureSubProblem : public PorousMediumFlowProblem<TypeTag>
         pressureIdx = Indices::pressureIdx,
         saturationIdx = Indices::saturationIdx,
         temperatureIdx = Indices::temperatureIdx,
+
+        //! Equation indices
+        contiCO2EqIdx = Indices::conti0EqIdx + FluidSystem::CO2Idx,
+		contiH2OEqIdx = Indices::conti0EqIdx + FluidSystem::BrineIdx,
+        energyEqIdx = Indices::energyEqIdx,
 
         wPhaseIdx = FluidSystem::BrineIdx,
         nPhaseIdx = FluidSystem::CO2Idx,
@@ -94,7 +106,13 @@ public:
     , aperture5_(getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Aperture5"))
     , IsPureCO2_(getParamFromGroup<Scalar>(paramGroup, "Problem.IsPureCO2"))
     , kn_(getParamFromGroup<Scalar>(paramGroup, "Problem.Stiffness"))
-    , alphaT_(getParamFromGroup<Scalar>(paramGroup, "Problem.ThermalExpansionCoefficient"))
+    , wte_(getParamFromGroup<Scalar>(paramGroup, "Problem.WettingPhaseThermalExpansionCoefficient"))
+    , nte_(getParamFromGroup<Scalar>(paramGroup, "Problem.NonWettingPhaseThermalExpansionCoefficient"))
+    , a_(getParamFromGroup<Scalar>(paramGroup, "Problem.a"))
+    , b_(getParamFromGroup<Scalar>(paramGroup, "Problem.b"))
+//    , InjectionRate_(getParamFromGroup<Scalar>(paramGroup, "Problem.InjectionRate"))
+//    , InjectionTemperature_(getParamFromGroup<Scalar>(paramGroup, "Problem.InjectionTemperature"))
+//    , IsInjectCO2_(getParamFromGroup<Scalar>(paramGroup, "Problem.IsInjectCO2"))
     {
         // initialize the fluid system, i.e. the tabulation
         // of water properties. Use the default p/T ranges.
@@ -104,20 +122,47 @@ public:
         using PermeabilityType = Scalar;
     }
 
+    template<class VTKWriter>
+    void addVtkFields(VTKWriter& vtk)
+    {
+        vtk.addField(deltaT_, "deltaT");
+        vtk.addField(overPressure_, "deltaP");
+
+    }
+
+    void updateVtkFields(const SolutionVector& curSol)
+    {
+    	int dofCodim = 0;
+    	const auto& gridView = this->gridGeometry().gridView();
+    	deltaT_.resize(gridView.size(dofCodim));
+    	overPressure_.resize(gridView.size(dofCodim));
+
+        for (const auto& element : elements(this->gridGeometry().gridView()))
+        {
+            auto elemSol = elementSolution(element, curSol, this->gridGeometry());
+            auto fvGeometry = localView(this->gridGeometry());
+            fvGeometry.bindElement(element);
+//
+            for (auto&& scv : scvs(fvGeometry))
+            {
+                const auto dofIdxGlobal = scv.dofIndex();
+                const GlobalPosition& globalPos = scv.center();
+//                VolumeVariables volVars;
+                const auto& priVars = elemSol[scv.localDofIndex()];
+                const auto initialValues = initialAtPos(globalPos);
+//                volVars.update(elemSol, *this, element, scv);
+                deltaT_[dofIdxGlobal] = priVars[temperatureIdx] - initialValues[temperatureIdx];
+                overPressure_[dofIdxGlobal] = priVars[pressureIdx] - initialValues[pressureIdx];
+            }
+        }
+    }
+
     //! Specifies the type of boundary condition at a given position
     BoundaryTypes boundaryTypesAtPos(const GlobalPosition& globalPos) const
     {
         BoundaryTypes values;
-
-        // We only use no-flow boundary conditions for all immersed fractures
-        // in the domain (fracture tips that do not touch the domain boundary)
-        // Otherwise, we would lose mass leaving across the fracture tips.
         values.setAllNeumann();
 
-        // However, there is one fracture reaching the top boundary. For this
-        // fracture tip we set Dirichlet Bcs as in the matrix domain
-        // TODO dumux-course-task A
-        // Change boundary conditions
         if (globalPos[0] > this->gridGeometry().bBoxMax()[0] - 1e-6)
             values.setAllDirichlet();
 
@@ -138,39 +183,36 @@ public:
         return source;
     }
 
-    //! Set the aperture as extrusion factor.
-//    Scalar extrusionFactorAtPos(const GlobalPosition& globalPos) const
-//    {
-//        // We treat the fractures as lower-dimensional in the grid,
-//        // but we have to give it the aperture as extrusion factor
-//        // such that the dimensions are correct in the end.
-//    	return aperture3_;
-//    }
     template< class ElementSolution >
     Scalar extrusionFactor(const Element& element,
                            const SubControlVolume& scv,
                            const ElementSolution& elemSol) const
     {
-	using FluidState = GetPropType<TypeTag, Properties::FluidState>;
-    	FluidState fs;
-        fs.setTemperature(wPhaseIdx, temperature_);
-        fs.setTemperature(nPhaseIdx, temperature_);
-	const auto peff_ = fs.saturation(nPhaseIdx) * fs.pressure(nPhaseIdx) + fs.saturation(wPhaseIdx)* fs.pressure(wPhaseIdx);
+//	    FluidState fs;
+//        VolumeVariables volVars;
+//		const auto peff_ = volVars.saturation(nPhaseIdx) * volVars.pressure(nPhaseIdx) + volVars.saturation(wPhaseIdx)* volVars.pressure(wPhaseIdx);
 
-	const GlobalPosition& globalPos = scv.center();
+        const auto& priVars = elemSol[scv.localDofIndex()];
+        const auto fmi = this->spatialParams().fluidMatrixInteraction(element, scv, elemSol);
+        const auto peff_ = priVars[saturationIdx] * (priVars[pressureIdx] + fmi.pc(1 - priVars[saturationIdx])) + (1 - priVars[saturationIdx]) * priVars[pressureIdx];
+
+		const GlobalPosition& globalPos = scv.center();
         const auto initialValues = initialAtPos(globalPos);
-        const auto deltaT_ = temperature_ - initialValues[temperatureIdx];
+        const auto ThermalExpan = (priVars[temperatureIdx] - initialValues[temperatureIdx]) * (priVars[saturationIdx] * nte_ + (1 - priVars[saturationIdx]) * wte_);
+        const auto deltaP = peff_ - initialValues[pressureIdx];
+//        const auto deltaT_ = volVars.temperature() - initialValues[temperatureIdx];
 
 		if (getElementDomainMarker(element) == 1)
-			return aperture1_ + peff_/kn_ + deltaT_ * alphaT_;
+			return aperture1_ + a_ * deltaP/kn_ + b_ * ThermalExpan * aperture1_ ;
 		else if (getElementDomainMarker(element) == 2)
-			return aperture2_ + peff_/kn_ + deltaT_ * alphaT_;
+			return aperture2_ + a_ * deltaP/kn_ + b_ * ThermalExpan * aperture2_;
 		else if (getElementDomainMarker(element) == 3)
-			return aperture3_ + peff_/kn_ + deltaT_ * alphaT_;
+			return aperture3_ + a_ * deltaP/kn_ + b_ * ThermalExpan * aperture3_;
 		else if (getElementDomainMarker(element) == 4)
-			return aperture4_ + peff_/kn_ + deltaT_ * alphaT_;
+			return aperture4_ + a_ * deltaP/kn_ + b_ * ThermalExpan * aperture4_;
 		else
-        	return aperture5_ + peff_/kn_ + deltaT_ * alphaT_;
+        	return aperture5_ + a_ * deltaP/kn_ + b_ * ThermalExpan * aperture5_;
+//    	return 1e-3;
     }
 
     //! evaluates the Dirichlet boundary condition for a given position
@@ -197,9 +239,42 @@ public:
         return values;
     }
 
+//    NumEqVector neumannAtPos(const GlobalPosition &globalPos) const
+//    {
+//        NumEqVector values(0.0);
+//
+//        if (globalPos[dimWorld-1] < 75 + eps_ && globalPos[dimWorld-1] > 25 - eps_ && globalPos[0] < this->gridGeometry().bBoxMin()[0] + eps_)
+//        {
+//            // compute enthalpy flux associated with this injection [(J/(kg*s)]
+//            using FluidState = GetPropType<TypeTag, Properties::FluidState>;
+//            FluidState fs;
+//
+//            const auto initialValues = initialAtPos(globalPos);
+//            fs.setPressure(wPhaseIdx, initialValues[pressureIdx]);
+//            fs.setPressure(nPhaseIdx, initialValues[pressureIdx]); // assume pressure equality here
+//            fs.setTemperature(wPhaseIdx, InjectionTemperature_);
+//            fs.setTemperature(nPhaseIdx, InjectionTemperature_);
+//
+//            // energy flux is mass flux times specific enthalpy
+//            if (IsInjectCO2_)
+//                // inject air. negative values mean injection
+//			{
+//            	values[contiCO2EqIdx] = -InjectionRate_ * 700; // kg/(s*m^2) flow rate * density
+//            	values[energyEqIdx] = values[contiCO2EqIdx]*FluidSystem::enthalpy(fs, nPhaseIdx);
+//			}
+//			else
+//			{
+//                values[contiH2OEqIdx] = -InjectionRate_ * 1000; // kg/(s*m^2) flow rate * density
+//            	values[energyEqIdx] = values[contiH2OEqIdx]*FluidSystem::enthalpy(fs, wPhaseIdx);
+//			}
+//        }
+//
+//        return values;
+//    }
+
     //! returns the temperature in \f$\mathrm{[K]}\f$ in the domain
     Scalar temperature() const
-    { return temperature_; /*10°*/ }
+    { return 283.15; /*10°*/ }
 
 //    Scalar pressure(int PhaseIdx) const
 //    {return pressure_ ;}
@@ -220,9 +295,14 @@ private:
     std::shared_ptr<const Dumux::GridData<Grid>> gridDataPtr_;
     Scalar aperture1_,aperture2_,aperture3_,aperture4_,aperture5_;
     bool IsPureCO2_;
+//    bool IsInjectCO2_;
     static constexpr Scalar eps_ = 1e-7;
-    Scalar kn_, alphaT_;
+    Scalar kn_, nte_, wte_;
     Scalar temperature_;
+    Scalar a_, b_;
+    std::vector<Scalar> deltaT_ , overPressure_;
+//    Scalar InjectionTemperature_;
+//    Scalar InjectionRate_;
 };
 
 } // end namespace Dumux
