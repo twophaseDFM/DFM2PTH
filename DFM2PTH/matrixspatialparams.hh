@@ -67,7 +67,6 @@ public:
     , pcKrSwCurve_("Matrix.SpatialParams")
     {
         porosity_ = getParamFromGroup<Scalar>(paramGroup, "SpatialParams.Porosity");
-        permeabilityWell_ = getParamFromGroup<Scalar>(paramGroup, "SpatialParams.PermeabilityWell");
         permeabilityRock_ = getParamFromGroup<Scalar>(paramGroup, "SpatialParams.PermeabilityRock");
 
     }
@@ -112,7 +111,7 @@ private:
     std::shared_ptr<const Dumux::GridData<Grid>> gridDataPtr_;
 
     Scalar porosity_;
-    PermeabilityType permeabilityWell_, permeabilityRock_;
+    PermeabilityType permeabilityRock_;
     const PcKrSwCurve pcKrSwCurve_;
     static constexpr Scalar eps_ = 1e-7 ;
 };
